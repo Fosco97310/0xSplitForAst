@@ -5,14 +5,15 @@ import axios from 'axios';
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
 
-const token = '<Ton Token ICI>'
+const token = '<Token Here>'
+const apiKey = 'freekey' // api ethplorer
 
 const bot = new Telegraf(token);
 
 const address = "0xe2E7AE67E7ee6d4D90dfef945aB6dE6A14dB4c17";
 const args = {
     userId: address,
-}  
+}
 
 const splitsClient = new SplitsClient({
     chainId: 1
@@ -27,12 +28,12 @@ resultTokenData.data.forEach(element => {
 async function getAllWithdraw() {
     const response = await splitsClient.getUserEarnings(args)
     let withdrawData = []
-    for (const key in response.activeBalances) {
-        let tokenSymbol = tokenData[key].tokenSymbol
-        let tokenBalance = formatBalance(response.activeBalances[key]._hex, tokenData[key].tokenDecimal)
-        let datatest = await axios.get(`https://api.coingecko.com/api/v3/simple/token_price/ethereum?contract_addresses=${key}&vs_currencies=usd`)
-        let tokenPrice = tokenBalance*datatest.data[key.toLowerCase()].usd
-        withdrawData.push({tokenSymbol: tokenSymbol, tokenBalance: tokenBalance, tokenPrice: tokenPrice, tokenAddress: tokenData[key].tokenAddress})
+    for (const addr in response.activeBalances) {
+        let tokenSymbol = tokenData[addr].tokenSymbol
+        let tokenBalance = formatBalance(response.activeBalances[addr]._hex, tokenData[addr].tokenDecimal)
+	let datatest = await axios.get(`https://api.ethplorer.io/getTokenInfo/${addr}?apiKey=${apiKey}`)
+        let tokenPrice = tokenBalance*datatest.data.price.rate
+        withdrawData.push({tokenSymbol: tokenSymbol, tokenBalance: tokenBalance, tokenPrice: tokenPrice, tokenAddress: tokenData[addr].tokenAddress})
     }
     withdrawData.sort((a, b) => b.tokenPrice - a.tokenPrice)
     return withdrawData;
@@ -40,7 +41,8 @@ async function getAllWithdraw() {
 
 let lastMessageTime = 0;
 
-bot.use((ctx, next) => {
+bot.command('getwithdraw', async ctx => {
+    console.log(ctx.from)
     const message = ctx.update.message;
     if (message.chat.type === 'private') {
         return;
@@ -48,35 +50,27 @@ bot.use((ctx, next) => {
     const currentTime = Date.now();
     if (currentTime - lastMessageTime > 60000) {
         lastMessageTime = currentTime;
-        return next();
+        try {
+            let awnser = await getAllWithdraw()
+            let text = "Tokens qui attendent d'être withdraw :\n\n"
+            awnser.forEach(element => {
+                text += element.tokenBalance.toFixed(2)
+                text += `<a href="etherscan.io/token/${element.tokenAddress}">`
+                text += " "
+                text += element.tokenSymbol
+                text += "</a> - $"
+                text += element.tokenPrice.toFixed(2)
+                text += "\n"
+            })
+            text += '\n<a href="https://app.0xsplits.xyz/accounts/0xe2E7AE67E7ee6d4D90dfef945aB6dE6A14dB4c17/">Lien pour split/dispatch</a>'
+            bot.telegram.sendMessage(ctx.chat.id, text, {parse_mode: 'HTML', disable_web_page_preview: true})
+        } catch (error) {
+            bot.telegram.sendMessage(ctx.chat.id, "Erreur: requête api dépassé", {})
+            console.log(error)
+        }   
+    }else {
+        bot.telegram.sendMessage(ctx.chat.id, "Le bot est limité à une utilisation par minute", {})
     }
-    return ctx.reply('Le bot est limité à une utilisation par minute');
-});
-
-bot.command('getwithdraw', async ctx => {
-    console.log(ctx.from)
-    const message = ctx.update.message;
-    if (message.chat.type === 'private') {
-        return;
-    }
-    try {
-        let awnser = await getAllWithdraw()
-        let text = "Tokens qui attendent d'être withdraw :\n\n"
-        awnser.forEach(element => {
-            text += element.tokenBalance.toFixed(2)
-            text += `<a href="etherscan.io/address/${element.tokenAddress}">`
-            text += " "
-            text += element.tokenSymbol
-            text += "</a> - $"
-            text += element.tokenPrice.toFixed(2)
-            text += "\n" 
-        })
-        text += "\nData provided by CoinGecko" 
-        bot.telegram.sendMessage(ctx.chat.id, text, {parse_mode: 'HTML', disable_web_page_preview: true})
-    } catch (error) {
-        bot.telegram.sendMessage(ctx.chat.id, "Erreur: requête api dépassé")
-        console.log(error)
-    } 
 })
 
 bot.launch({ dropPendingUpdates: true })
